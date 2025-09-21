@@ -67,7 +67,7 @@ VOL_MULT_WEAK = 1.5
 PRICE_ACCEL_THRESHOLD = 0.007
 SCORE_ALERT = 35
 SCORE_SIGNAL = 50
-MAX_ALERTS_PER_SYMBOL_PER_DAY = 2
+MAX_ALERTS_PER_SYMBOL_PER_DAY = 1
 
 # state file (persist alerts / active_trades / cache)
 STATE_FILE = "pumphunter_state_v2.json"
