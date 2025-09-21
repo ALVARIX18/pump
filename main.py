@@ -62,12 +62,12 @@ SYMBOLS = [
 MIN_CANDLES = 30
 KLIMIT = 60
 POLL_SECONDS = 60           # main loop sleep (set 60s for nicer logs)
-VOL_MULT_STRONG = 3.0
-VOL_MULT_WEAK = 1.6
+VOL_MULT_STRONG = 2.5
+VOL_MULT_WEAK = 1.5
 PRICE_ACCEL_THRESHOLD = 0.007
-SCORE_ALERT = 1
-SCORE_SIGNAL = 2
-MAX_ALERTS_PER_SYMBOL_PER_DAY = 3
+SCORE_ALERT = 35
+SCORE_SIGNAL = 50
+MAX_ALERTS_PER_SYMBOL_PER_DAY = 2
 
 # state file (persist alerts / active_trades / cache)
 STATE_FILE = "pumphunter_state_v2.json"
