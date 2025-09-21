@@ -65,8 +65,8 @@ POLL_SECONDS = 60           # main loop sleep (set 60s for nicer logs)
 VOL_MULT_STRONG = 3.0
 VOL_MULT_WEAK = 1.6
 PRICE_ACCEL_THRESHOLD = 0.007
-SCORE_ALERT = 50
-SCORE_SIGNAL = 75
+SCORE_ALERT = 1
+SCORE_SIGNAL = 2
 MAX_ALERTS_PER_SYMBOL_PER_DAY = 3
 
 # state file (persist alerts / active_trades / cache)
