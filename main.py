@@ -40,8 +40,8 @@ DRY_RUN = False  # ضع False لترسل إشعارات حقيقية
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", None)
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", None)
 # مثال لتجربة محلية مؤقتة (غير موصى به لهذا الريبو):
-ELEGRAM_BOT_TOKEN = "8294324404:AAGyA3W6S3E98TaqOgc9iQpPVOcAqlJ2Ung"
-TELEGRAM_CHAT_ID = "-1003089256716"
+# TELEGRAM_BOT_TOKEN = "PUT_YOUR_TOKEN_HERE"
+# TELEGRAM_CHAT_ID = "PUT_YOUR_CHAT_ID_HERE"
 
 # قائمة العملات التي يتم مسحها (يمكن تغييرها كسلسلة مفصولة بفواصل في متغيرات البيئة)
 SYMBOLS = os.environ.get("SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT,TRXUSDT").split(",")
