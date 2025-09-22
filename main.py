@@ -1,32 +1,38 @@
 import time
-import random
+import requests
+import pandas as pd
+import numpy as np
+import ta
 
-# إعدادات البوت
-SCORE_SIGNAL = 12
-SCORE_ALERT = 8
-VOL_MULT_STRONG = 1.8
-VOL_MULT_WEAK = 1.2
-MAX_ALERTS_PER_SYMBOL_PER_DAY = 1
-MAX_TRADES_PER_DAY = 7
+# ==============================
+# إعدادات Binance (زيد API Keys هنا إذا حاب)
+# ==============================
+BINANCE_API_KEY = "ضع_المفتاح_هنا"
+BINANCE_API_SECRET = "ضع_السر_هنا"
 
-def generate_trade(symbol):
-    entry = round(random.uniform(0.01, 1.0), 6)
-    targets = [round(entry * (1 + 0.01 * i), 6) for i in range(1, 8)]
-    stop = round(entry * 0.98, 6)
-    trade = f"""💥 NEW TRADE 💥
-{symbol}USDT
-Side: LONG
-Entry: {entry}
-Leverage: 20x
+# ==============================
+# إعدادات التلغرام
+# ==============================
+TELEGRAM_BOT_TOKEN = "ضع_توكن_البوت"
+TELEGRAM_CHAT_ID = "ضع_CHAT_ID"
 
-Take Profits:
-{chr(10).join([f'• TP{i+1}: {t}' for i, t in enumerate(targets)])}
+def send_telegram(message: str):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, data=data)
+    except Exception as e:
+        print("خطأ في إرسال التلغرام:", e)
 
-⛔ STOP: {stop}
-"""
-    return trade
+# ==============================
+# الدالة الرئيسية
+# ==============================
+def main():
+    while True:
+        msg = "🚀 PumpHunter شغال 24/24!"
+        print(msg)
+        send_telegram(msg)
+        time.sleep(60)  # يرسل كل دقيقة (بدلها بالمنطق تاع الصفقات)
 
 if __name__ == "__main__":
-    for i in range(3):
-        print(generate_trade("TEST"))
-        time.sleep(2)
+    main()
