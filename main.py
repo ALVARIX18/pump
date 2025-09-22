@@ -44,8 +44,13 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", None)
 # TELEGRAM_CHAT_ID = "PUT_YOUR_CHAT_ID_HERE"
 
 # قائمة العملات التي يتم مسحها (يمكن تغييرها كسلسلة مفصولة بفواصل في متغيرات البيئة)
-SYMBOLS = os.environ.get("SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT,TRXUSDT").split(",")
-
+SYMBOLS = [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "SOLUSDT",
+    "XRPUSDT", "DOGEUSDT", "TRXUSDT", "LTCUSDT", "MATICUSDT",
+    "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "UNIUSDT", "LINKUSDT",
+    "ATOMUSDT", "ALGOUSDT", "MANAUSDT", "SANDUSDT", "NEARUSDT",
+    "VETUSDT", "XMRUSDT", "XLMUSDT", "FTMUSDT", "APEUSDT"
+]
 # إعدادات ضبط السلوك
 MIN_CANDLES = int(os.environ.get("MIN_CANDLES", 30))
 KLIMIT = int(os.environ.get("KLIMIT", 60))
