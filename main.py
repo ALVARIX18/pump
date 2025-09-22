@@ -62,11 +62,11 @@ SYMBOLS = [
 MIN_CANDLES = 30
 KLIMIT = 60
 POLL_SECONDS = 60           # main loop sleep (set 60s for nicer logs)
-VOL_MULT_STRONG = 1.1
+VOL_MULT_STRONG = 3
 VOL_MULT_WEAK = 1.1
-PRICE_ACCEL_THRESHOLD = 0.010
+PRICE_ACCEL_THRESHOLD = 0.110
 SCORE_ALERT = 3
-SCORE_SIGNAL = 8
+SCORE_SIGNAL = 7
 MAX_ALERTS_PER_SYMBOL_PER_DAY = 1
 
 # state file (persist alerts / active_trades / cache)
