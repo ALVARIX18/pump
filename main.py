@@ -27,8 +27,8 @@ DRY_RUN = True
 ENABLE_EXECUTION = False
 
 # Put tokens in environment variables (recommended)
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_BOT_TOKEN = os.environ.get("8294324404:AAGyA3W6S3E98TaqOgc9iQpPVOcAqlJ2Ung")
+TELEGRAM_CHAT_ID = os.environ.get("-1003089256716")
 
 # Symbols to scan
 SYMBOLS = [
