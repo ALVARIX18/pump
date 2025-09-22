@@ -313,7 +313,8 @@ def get_leverage_for_score(score):
     if score >= 90: return 100
     if score >= 80: return 50
     if score >= 70: return 25
-    if score >= 65: return 20
+    if score >= 60: return 20
+    if score >= 40: return 10   # <--- أضف هذا
     return None
 
 def compose_targets_and_stop(entry, df_for_atr, side='LONG', score=0, leverage=20):
