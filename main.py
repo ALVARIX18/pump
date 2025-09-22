@@ -64,9 +64,9 @@ KLIMIT = 60
 POLL_SECONDS = 60           # main loop sleep (set 60s for nicer logs)
 VOL_MULT_STRONG = 3
 VOL_MULT_WEAK = 1.1
-PRICE_ACCEL_THRESHOLD = 0.110
-SCORE_ALERT = 3
-SCORE_SIGNAL = 7
+PRICE_ACCEL_THRESHOLD = 0.510
+SCORE_ALERT = 10
+SCORE_SIGNAL = 12
 MAX_ALERTS_PER_SYMBOL_PER_DAY = 1
 
 # state file (persist alerts / active_trades / cache)
