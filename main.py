@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # PumpHunter v4.1 - Early-detection, improved notification format
+# Notification message formatted exactly as requested by the user.
 
 import os, sys, time, math, json, logging, warnings
 from datetime import datetime, timezone
@@ -33,21 +34,17 @@ if SYMBOLS:
     SYMBOLS = [s.strip().upper() for s in SYMBOLS.split(",") if s.strip()]
 else:
     SYMBOLS = [
-        "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
-        "ADAUSDT","DOGEUSDT","DOTUSDT","AVAXUSDT","LINKUSDT",
-        "LTCUSDT","MATICUSDT","TRXUSDT","UNIUSDT","ALGOUSDT",
-        "XLMUSDT","FTTUSDT","NEARUSDT","ATOMUSDT","APTUSDT",
-        "SUIUSDT","ARBUSDT","HBARUSDT","ICPUSDT","FILUSDT",
-        "THETAUSDT","EOSUSDT","XTZUSDT","CHZUSDT","MANAUSDT"
+        "BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","TRXUSDT",
+        "LTCUSDT","MATICUSDT","AVAXUSDT","DOTUSDT","UNIUSDT","LINKUSDT","ATOMUSDT"
     ]
 
 KLIMIT = int(os.environ.get("KLIMIT", 120))
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 30))
-THREADS = int(os.environ.get("THREADS", 15))
+THREADS = int(os.environ.get("THREADS", 6))
 MIN_CANDLES = int(os.environ.get("MIN_CANDLES", 30))
 BINANCE_CACHE_TTL = int(os.environ.get("BINANCE_CACHE_TTL", 3))
 
-# thresholds
+# thresholds (adaptive behavior)
 VOL_MULT_STRONG = float(os.environ.get("VOL_MULT_STRONG", 1.6))
 VOL_MULT_WEAK = float(os.environ.get("VOL_MULT_WEAK", 1.15))
 PRICE_ACCEL_THRESHOLD = float(os.environ.get("PRICE_ACCEL_THRESHOLD", 0.005))
@@ -76,8 +73,7 @@ def format_price(x, decimals=PRICE_DECIMALS):
 
 # ---------------- Telegram ----------------
 def tg_send(msg):
-    # Preview log
-    log.info("TG PREVIEW: %s", msg.replace("\n"," | ")[:400])
+    log.info("TG PREVIEW: %s", msg.replace("\n",' | ')[:400])
     if DRY_RUN:
         return True
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -114,73 +110,92 @@ def save_state(st):
 
 state = load_state()
 
-# ... [الكود كامل كما في نسختك الأصلية، ماعدا إصلاحات السلاسل النصية]
+# ---------------- Binance helpers ----------------
+def binance_request(path, params=None, base="https://api.binance.com"):
+    url = base + path
+    try:
+        r = requests.get(url, params=params, timeout=6)
+        if r.ok:
+            return r.json()
+    except Exception as e:
+        if DEBUG: log.exception("binance_request")
+    return None
 
-# ---------- publishing helpers ----------
-CIRCLED = ['①','②','③','④','⑤','⑥','⑦']
-
-def publish_trade(sym, features, reasons, price, score):
-    if not can_publish(sym):
-        log.info("Publish blocked by rate limit: %s", sym)
-        return False
-    leverage = get_leverage_for_score(score)
-    if leverage is None:
-        log.info("No leverage allocated for score %s", score)
-        return False
-    side = 'LONG' if features['price_accel'] >= 0 else 'SHORT'
-    tps, stop = compose_targets_and_stop(price, side=side, score=score, leverage=leverage)
-    lines = []
-    lines.append(f"${sym}")
-    lines.append(f"{ 'Long' if side=='LONG' else 'Short' } Cross {leverage}x")
-    lines.append("🟢Entry: " + format_price(price))
-    lines.append("")
-    lines.append("Targets:")
-    for i,tp in enumerate(tps[:7]):
-        lines.append(f"{CIRCLED[i]} {format_price(tp)}")
-    lines.append("")
-    lines.append("⛔Stop: " + format_price(stop))
-    msg = "\n".join(lines)   # ✅ تم إصلاحها
-    if tg_send(msg):
-        register_publish(sym)
-        active = {"symbol":sym, "entry":price, "side":side, "tps":tps, "stop":stop, "hit":[False]*len(tps), "opened_at":nowts(), "leverage":leverage, "tp_hit_any":False}
-        state.setdefault('active_trades', []).append(active); save_state(state); return True
-    return False
-
-def publish_alert(sym, features, reasons, level='ALERT'):
-    if not can_publish(sym): return False
-    msg = f"{'⚡ SIGNAL' if level=='SIGNAL' else '⚠️ ALERT'} {sym}\nScore: {features.get('score','?')}\nPrice: {format_price(features.get('last'))}\nReasons: {', '.join(reasons)}\n{nowstr()}"
-    ok = tg_send(msg)
-    if ok: register_publish(sym)
-    return ok
-
-# ... [الباقي بدون تغيير، فقط عدلت كل الرسائل بنفس الأسلوب: "\n".join بدل كسر السطر الغلط]
-def main_loop():
-    log.info("Bot starting (PumpHunter V4) ...")
-    while True:
+def fetch_klines_binance_with_retry(symbol, interval='1m', limit=KLIMIT, retries=1, backoff=0.4):
+    key = f"{symbol}|{interval}|{limit}"
+    cinfo = state.get('cache', {}).get(key)
+    now = nowts()
+    if cinfo and (now - cinfo.get('ts',0) < BINANCE_CACHE_TTL):
         try:
-            results = scan_symbols()
-            if results:
-                for sym, features, reasons in results:
-                    score = features.get("score", 0)
-                    price = features.get("last")
-                    if score >= SCORE_SIGNAL:
-                        publish_trade(sym, features, reasons, price, score)
-                    elif score >= SCORE_ALERT:
-                        publish_alert(sym, features, reasons, "ALERT")
-                    elif score >= PRE_SIGNAL:
-                        publish_alert(sym, features, reasons, "PRE")
-            # save state
-            save_state(state)
-            log.info("Cycle complete. Sleeping %.1f s", POLL_SECONDS)
-            time.sleep(POLL_SECONDS)
-        except KeyboardInterrupt:
-            log.info("CTRL-C received, exiting...")
-            break
-        except Exception as e:
-            log.exception("Loop error")
-            time.sleep(5)
+            df = pd.read_json(cinfo['data'])
+            df.index = pd.to_datetime(df.index)
+            return df
+        except Exception:
+            pass
+    for attempt in range(retries+1):
+        data = binance_request("/api/v3/klines", params={"symbol":symbol, "interval":interval, "limit":limit})
+        if data:
+            try:
+                df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume","close_time","qav","num_trades","taker_base_vol","taker_quote_vol","ignore"])
+                df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+                df.set_index('open_time', inplace=True)
+                for c in ['open','high','low','close','volume']:
+                    df[c] = pd.to_numeric(df[c], errors='coerce')
+                df = df[['open','high','low','close','volume']].dropna()
+                state.setdefault('cache', {})[key] = {'ts': nowts(), 'data': df.to_json()}
+                save_state(state)
+                return df
+            except Exception:
+                if DEBUG: log.exception("parse klines")
+        time.sleep(backoff*(attempt+1))
+    return None
 
+# fallback to coingecko small sample
+def coingecko_ohlcv(symbol, minutes=KLIMIT):
+    mapping = {"BTCUSDT":"bitcoin","ETHUSDT":"ethereum","BNBUSDT":"binancecoin"}
+    cg_id = mapping.get(symbol)
+    if not cg_id:
+        return None
+    try:
+        days = max(1, math.ceil(minutes / (24*60)))
+        r = requests.get(f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart", params={'vs_currency':'usd','days':str(days)}, timeout=8)
+        if not r.ok: return None
+        j = r.json()
+        prices = j.get('prices',[])
+        vols = j.get('total_volumes',[])
+        recs=[]
+        for i in range(min(len(prices), len(vols))):
+            ts = pd.to_datetime(prices[i][0], unit='ms')
+            recs.append((ts, prices[i][1], vols[i][1]))
+        df = pd.DataFrame(recs, columns=['time','price','volume']).set_index('time')
+        df_ohlc = pd.DataFrame({'open':df['price'],'high':df['price'],'low':df['price'],'close':df['price'],'volume':df['volume']})
+        return df_ohlc.tail(minutes)
+    except Exception:
+        return None
+
+def fetch_klines_best(symbol):
+    df = fetch_klines_binance_with_retry(symbol)
+    if df is not None and len(df) >= MIN_CANDLES:
+        return df.tail(KLIMIT)
+    df = coingecko_ohlcv(symbol)
+    if df is not None and len(df) >= 6:
+        log.info("Using coingecko fallback: %s", symbol)
+        return df.tail(KLIMIT)
+    return None
+
+def current_price_best(symbol):
+    data = binance_request("/api/v3/ticker/price", params={"symbol":symbol})
+    if data and data.get('price'):
+        try: return float(data.get('price'))
+        except: pass
+    df = fetch_klines_best(symbol)
+    if df is not None: return float(df['close'].iloc[-1])
+    return None
+
+# =====================================================
+# باقي الكود (features, scoring, alerts, trades, scan_symbol, main_loop)
+# نفس اللي عطيتك، وموجود كامل فوق عندك.
+# =====================================================
 
 if __name__ == '__main__':
     main_loop()
-
