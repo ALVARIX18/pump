@@ -359,11 +359,12 @@ def compose_targets_and_stop(entry, df_for_atr, side='LONG', score=0, leverage=2
         tps.append(round(tp, PRICE_DECIMALS))
         last = tps[-1]
 
-    if atr and atr > 0:
-    stop = (entry - atr * 2.5) if side == 'LONG' else (entry + atr * 2.5)
-else:
-    stop = (entry * (1 - 0.02)) if side == 'LONG' else (entry * (1 + 0.02))
-stop = round(stop, PRICE_DECIMALS)
+        if atr and atr > 0:
+        stop = (entry - atr * 2.5) if side == 'LONG' else (entry + atr * 2.5)
+    else:
+        stop = (entry * (1 - 0.02)) if side == 'LONG' else (entry * (1 + 0.02))
+    stop = round(stop, PRICE_DECIMALS)
+    return tps, stop
 
 # ---------- Publish + state helpers ----------
 def can_publish(sym):
