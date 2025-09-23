@@ -28,7 +28,7 @@ log = logging.getLogger("PumpHunterV4")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ---------------- CONFIG ----------------
-DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"  # safe default: DRY_RUN ON
+DRY_RUN = os.environ.get("DRY_RUN", "0") == "0"  # safe default: DRY_RUN ON
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -54,8 +54,8 @@ VOL_MULT_STRONG = float(os.environ.get("VOL_MULT_STRONG", 1.6))
 VOL_MULT_WEAK = float(os.environ.get("VOL_MULT_WEAK", 1.15))
 PRICE_ACCEL_THRESHOLD = float(os.environ.get("PRICE_ACCEL_THRESHOLD", 0.005))
 SCORE_SIGNAL = int(os.environ.get("SCORE_SIGNAL", 75))
-SCORE_ALERT = int(os.environ.get("SCORE_ALERT", 60))
-PRE_SIGNAL = int(os.environ.get("PRE_SIGNAL", 55))
+SCORE_ALERT = int(os.environ.get("SCORE_ALERT", 75))
+PRE_SIGNAL = int(os.environ.get("PRE_SIGNAL", 75))
 MAX_ALERTS_PER_SYMBOL_PER_DAY = int(os.environ.get("MAX_ALERTS_PER_SYMBOL_PER_DAY", 1))
 MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 6))
 
