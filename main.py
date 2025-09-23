@@ -560,7 +560,7 @@ def main_loop():
                 log.info("%s | score=%s | vol_mult=%.2f | accel=%.6f | rsi=%s | last=%s | pulse=%s",
                          sym, score, features['vol_mult'], features['price_accel'],
                          ("%.2f" % features['rsi']) if features['rsi'] is not None else "n/a",
-                         format_price(last), (round(pulse[0],3), round(pulse[1],3), round(pulse[2],3))))
+                         format_price(last), (round(pulse[0], 3), round(pulse[1], 3), round(pulse[2], 3)))
 
                 if score >= SCORE_SIGNAL and can_publish(sym):
                     published = publish_trade(sym, features, reasons, price=last, score=score)
