@@ -33,14 +33,18 @@ SYMBOLS = os.environ.get("SYMBOLS")
 if SYMBOLS:
     SYMBOLS = [s.strip().upper() for s in SYMBOLS.split(",") if s.strip()]
 else:
-    SYMBOLS = [
-        "BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","TRXUSDT",
-        "LTCUSDT","MATICUSDT","AVAXUSDT","DOTUSDT","UNIUSDT","LINKUSDT","ATOMUSDT"
-    ]
+    symbols = [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT",
+    "LTCUSDT", "MATICUSDT", "TRXUSDT", "UNIUSDT", "ALGOUSDT",
+    "XLMUSDT", "FTTUSDT", "NEARUSDT", "ATOMUSDT", "APTUSDT",
+    "SUIUSDT", "ARBUSDT", "HBARUSDT", "ICPUSDT", "FILUSDT",
+    "THETAUSDT", "EOSUSDT", "XTZUSDT", "CHZUSDT", "MANAUSDT"
+]
 
 KLIMIT = int(os.environ.get("KLIMIT", 120))
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 30))
-THREADS = int(os.environ.get("THREADS", 6))
+THREADS = int(os.environ.get("THREADS", 15))
 MIN_CANDLES = int(os.environ.get("MIN_CANDLES", 30))
 BINANCE_CACHE_TTL = int(os.environ.get("BINANCE_CACHE_TTL", 3))
 
