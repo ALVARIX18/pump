@@ -18,14 +18,14 @@ except Exception as e:
     raise
 
 # ---------------- Logging ----------------
-DEBUG = os.environ.get("DEBUG", "0") == "0"
+DEBUG = os.environ.get("DEBUG", "0") == "1"
 level = logging.DEBUG if DEBUG else logging.INFO
 logging.basicConfig(stream=sys.stdout, level=level, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("PumpHunterV4")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ---------------- CONFIG ----------------
-DRY_RUN = os.environ.get("DRY_RUN", "1") != "0"   # safe default: DRY_RUN ON
+DRY_RUN = os.environ.get("DRY_RUN", "0") != "0"   # safe default: DRY_RUN ON
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
