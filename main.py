@@ -53,7 +53,7 @@ VOL_MULT_STRONG = float(os.environ.get("VOL_MULT_STRONG", 1.8))
 VOL_MULT_WEAK = float(os.environ.get("VOL_MULT_WEAK", 1.2))
 PRICE_ACCEL_THRESHOLD = float(os.environ.get("PRICE_ACCEL_THRESHOLD", 0.007))
 SCORE_ALERT = int(os.environ.get("SCORE_ALERT", 45))
-SCORE_SIGNAL = int(os.environ.get("SCORE_SIGNAL", 50))
+SCORE_SIGNAL = int(os.environ.get("SCORE_SIGNAL", 45))
 
 MAX_ALERTS_PER_SYMBOL_PER_DAY = int(os.environ.get("MAX_ALERTS_PER_SYMBOL_PER_DAY", 1))
 MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 7))
