@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# PumpHunter v4.0 - Early-detection & parallel scanning (improved from v3.1)
-# - Goals: detect moves earlier (pre-move), provide LONG/SHORT signals faster, improve success rate
-# - Methods used: parallel symbol fetch, multi-timeframe checks, orderbook + taker spike early detector,
-#   momentum acceleration, adaptive thresholds, "watchlist -> confirm" pre-signal flow, and safer defaults.
-# - Important: This is heuristic-based. No method guarantees profit. Backtest before using live.
+# PumpHunter v4.1 - Early-detection, improved notification format
+# Notification message formatted exactly as requested by the user.
 
 import os, sys, time, math, json, logging, warnings
 from datetime import datetime, timezone
@@ -47,7 +44,7 @@ THREADS = int(os.environ.get("THREADS", 6))
 MIN_CANDLES = int(os.environ.get("MIN_CANDLES", 30))
 BINANCE_CACHE_TTL = int(os.environ.get("BINANCE_CACHE_TTL", 3))
 
-# thresholds (adaptive behavior below)
+# thresholds (adaptive behavior)
 VOL_MULT_STRONG = float(os.environ.get("VOL_MULT_STRONG", 1.6))
 VOL_MULT_WEAK = float(os.environ.get("VOL_MULT_WEAK", 1.15))
 PRICE_ACCEL_THRESHOLD = float(os.environ.get("PRICE_ACCEL_THRESHOLD", 0.005))
@@ -76,7 +73,9 @@ def format_price(x, decimals=PRICE_DECIMALS):
 
 # ---------------- Telegram ----------------
 def tg_send(msg):
-    log.info("TG PREVIEW: %s", msg.replace('\n',' | ')[:400])
+    # Preview log
+    log.info("TG PREVIEW: %s", msg.replace('
+',' | ')[:400])
     if DRY_RUN:
         return True
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -153,7 +152,7 @@ def fetch_klines_binance_with_retry(symbol, interval='1m', limit=KLIMIT, retries
         time.sleep(backoff*(attempt+1))
     return None
 
-# fallback to coingecko small sample (keeps prior behaviour)
+# fallback to coingecko small sample
 def coingecko_ohlcv(symbol, minutes=KLIMIT):
     mapping = {"BTCUSDT":"bitcoin","ETHUSDT":"ethereum","BNBUSDT":"binancecoin"}
     cg_id = mapping.get(symbol)
@@ -229,8 +228,7 @@ def compute_pulse(ob, trades, top_n=10):
                 sell_taker += q
             else:
                 buy_taker += q
-            # detect large trades
-            if q >= 0.01: # tunable: large trade threshold relative to coin
+            if q >= 0.01:
                 big_taker_count += 1
                 big_taker_volume += q
         taker_ratio = (buy_taker - sell_taker) / (buy_taker + sell_taker + 1e-9)
@@ -245,17 +243,13 @@ def compute_pump_features(df):
     vols = df['volume'].astype(float)
     returns = closes.pct_change().fillna(0)
     last_price = float(closes.iloc[-1])
-    # use EWMA for mean volume to be more sensitive
     vol_mean = vols.ewm(span=30, adjust=False).mean().iloc[-2] if len(vols) >= 10 else vols.mean()
     vol_last = float(vols.iloc[-1]) if len(vols)>0 else 0.0
     vol_mult = (vol_last / (vol_mean + 1e-9)) if vol_mean>0 else 0.0
-    # use accelerating returns over last 1,2,3 candles
     price_accel = float((returns.tail(3).sum()) if len(returns)>=3 else returns.sum())
     recent_return_5 = float(returns.tail(5).sum()) if len(returns)>=5 else float(returns.sum())
-    # leading momentum: slope of short EMA over last 5 samples
     try:
         ema5 = closes.ewm(span=5, adjust=False).mean()
-        ema20 = closes.ewm(span=20, adjust=False).mean()
         slope = (ema5.iloc[-1] - ema5.iloc[-3]) if len(ema5)>=3 else 0.0
     except Exception:
         slope = 0.0
@@ -299,10 +293,8 @@ def compute_pump_score(features, pulse_vals=None):
     macd = features.get('macd')
     if macd is not None and macd>0:
         score += 6; reasons.append('MACD_pos')
-    # slope adds early momentum
     if abs(features.get('slope',0))>0:
         score += min(8, int(abs(features['slope']*1000))); reasons.append('slope')
-    # pulse adjustments
     if pulse_vals:
         ob_imb, taker_ratio, big_taker_vol = pulse_vals
         if abs(ob_imb) > 0.25:
@@ -311,14 +303,11 @@ def compute_pump_score(features, pulse_vals=None):
             score += 12; reasons.append('taker')
         if big_taker_vol > 0:
             score += min(8, int(big_taker_vol*100)); reasons.append('big_taker')
-    # cap
     score = max(0, min(100, int(score)))
     return score, reasons
 
 # ---------- watchlist pre-signal flow ----------
-# Idea: mark symbol as "pre" when it crosses PRE_SIGNAL threshold, then confirm if score rises within short window
-
-PRE_SIGNAL_DURATION = int(os.environ.get('PRE_SIGNAL_DURATION', 12))  # seconds to wait for confirm
+PRE_SIGNAL_DURATION = int(os.environ.get('PRE_SIGNAL_DURATION', 12))
 
 def mark_watchlist(sym, score, features, reasons):
     w = state.setdefault('watchlist', {})
@@ -331,11 +320,9 @@ def check_watchlist_confirm(sym, newscore, features, reasons):
     rec = w.get(sym)
     if not rec: return False
     if nowts() - rec['first_seen'] > PRE_SIGNAL_DURATION:
-        # expired
         state['watchlist'].pop(sym, None)
         save_state(state)
         return False
-    # confirm if newscore improved significantly
     if newscore >= SCORE_SIGNAL or newscore >= rec['score'] + 10:
         state['watchlist'].pop(sym, None)
         save_state(state)
@@ -343,7 +330,6 @@ def check_watchlist_confirm(sym, newscore, features, reasons):
     return False
 
 # ---------- Leverage & targets (unchanged logic but safer) ----------
-
 def get_leverage_for_score(score):
     if score >= 95: return 50
     if score >= 85: return 25
@@ -353,7 +339,6 @@ def get_leverage_for_score(score):
     return None
 
 def compose_targets_and_stop(entry, side='LONG', score=0, leverage=10):
-    # more conservative targets for earlier signals, scaled with score
     if score >= 80:
         percents=[0.02,0.05,0.08,0.12,0.18,0.30,0.50]
     elif score >= 65:
@@ -367,8 +352,7 @@ def compose_targets_and_stop(entry, side='LONG', score=0, leverage=10):
     stop = entry*0.97 if side=='LONG' else entry*1.03
     return tps, round(stop, PRICE_DECIMALS)
 
-# ---------- publishing helpers ----------
-
+# ---------- publishing helpers (formatted message) ----------
 def can_publish(sym):
     now = nowts(); pub = state.get('alerts', {})
     daily = pub.get(sym, {"count":0, "last":0})
@@ -386,6 +370,9 @@ def register_publish(sym):
     pub[sym] = daily
     save_state(state)
 
+# Create nicely formatted message exactly like the user's example
+CIRCLED = ['①','②','③','④','⑤','⑥','⑦']
+
 def publish_trade(sym, features, reasons, price, score):
     if not can_publish(sym):
         log.info("Publish blocked by rate limit: %s", sym)
@@ -396,12 +383,20 @@ def publish_trade(sym, features, reasons, price, score):
         return False
     side = 'LONG' if features['price_accel'] >= 0 else 'SHORT'
     tps, stop = compose_targets_and_stop(price, side=side, score=score, leverage=leverage)
-    msg = [f"🚀 PumpHunter v4 - TRADE {sym}", f"Side: {side} | Lev: {leverage}x", f"Entry: {format_price(price)}", "Targets:"]
-    for i,tp in enumerate(tps,1): msg.append(f"{i}. {format_price(tp)}")
-    msg.append(f"Stop: {format_price(stop)}")
-    msg.append("Reasons: " + (", ".join(reasons)))
-    msg.append(nowstr()); msg.append(f"(score={score})"); msg_text = '\n'.join(msg)
-    if tg_send(msg_text):
+    # Build message in the exact requested visual format
+    lines = []
+    lines.append(f"${sym}")
+    lines.append(f"{ 'Long' if side=='LONG' else 'Short' } Cross {leverage}x")
+    lines.append("🟢Entry: " + format_price(price))
+    lines.append("")
+    lines.append("Targets:")
+    for i,tp in enumerate(tps[:7]):
+        lines.append(f"{CIRCLED[i]} {format_price(tp)}")
+    lines.append("")
+    lines.append("⛔Stop: " + format_price(stop))
+    msg = "
+".join(lines)
+    if tg_send(msg):
         register_publish(sym)
         active = {"symbol":sym, "entry":price, "side":side, "tps":tps, "stop":stop, "hit":[False]*len(tps), "opened_at":nowts(), "leverage":leverage, "tp_hit_any":False}
         state.setdefault('active_trades', []).append(active); save_state(state); return True
@@ -409,13 +404,16 @@ def publish_trade(sym, features, reasons, price, score):
 
 def publish_alert(sym, features, reasons, level='ALERT'):
     if not can_publish(sym): return False
-    msg = f"{'⚡ SIGNAL' if level=='SIGNAL' else '⚠️ ALERT'} {sym}\nScore: {features.get('score','?')}\nPrice: {format_price(features.get('last'))}\nReasons: {', '.join(reasons)}\n{nowstr()}"
+    msg = f"{'⚡ SIGNAL' if level=='SIGNAL' else '⚠️ ALERT'} {sym}
+Score: {features.get('score','?')}
+Price: {format_price(features.get('last'))}
+Reasons: {', '.join(reasons)}
+{nowstr()}"
     ok = tg_send(msg)
     if ok: register_publish(sym)
     return ok
 
-# ---------- Active trades monitor (same behaviour, robust) ----------
-
+# ---------- Active trades monitor (same behaviour) ----------
 def monitor_active_trades():
     changed = False
     active = state.get('active_trades', [])
@@ -432,17 +430,26 @@ def monitor_active_trades():
             for idx,tp in enumerate(tps):
                 if not hit[idx] and ((side=='LONG' and price>=tp) or (side=='SHORT' and price<=tp)):
                     hit[idx]=True; trade['hit']=hit; trade['tp_hit_any']=True
-                    tg_send(f"✅ TP{idx+1} HIT — {sym}\nTP: {format_price(tp)}\nNow: {format_price(price)}\n{nowstr()}")
+                    tg_send(f"✅ TP{idx+1} HIT — {sym}
+TP: {format_price(tp)}
+Now: {format_price(price)}
+{nowstr()}")
                     changed=True
             if (side=='LONG' and price<=stop) or (side=='SHORT' and price>=stop):
                 if not trade.get('tp_hit_any', False):
-                    tg_send(f"⛔ STOP HIT — {sym}\nStop: {format_price(stop)}\nNow: {format_price(price)}\n{nowstr()}")
+                    tg_send(f"⛔ STOP HIT — {sym}
+Stop: {format_price(stop)}
+Now: {format_price(price)}
+{nowstr()}")
                 state['active_trades'].remove(trade)
                 rec={'symbol':sym,'side':side,'entry':entry,'exit':price,'reason':'STOP','opened_at':trade.get('opened_at'),'closed_at':nowts(),'hit':hit}
                 state.setdefault('history',[]).append(rec); changed=True
                 continue
             if all(hit):
-                tg_send(f"🏁 ALL TPs HIT — {sym}\nEntry: {format_price(entry)}\nFinal: {format_price(price)}\n{nowstr()}")
+                tg_send(f"🏁 ALL TPs HIT — {sym}
+Entry: {format_price(entry)}
+Final: {format_price(price)}
+{nowstr()}")
                 state['active_trades'].remove(trade)
                 rec={'symbol':sym,'side':side,'entry':entry,'exit':price,'reason':'ALL_TP','opened_at':trade.get('opened_at'),'closed_at':nowts(),'hit':hit}
                 state.setdefault('history',[]).append(rec); changed=True
@@ -452,14 +459,12 @@ def monitor_active_trades():
     if changed: save_state(state)
 
 # ---------- main scanning worker (per symbol) ----------
-
 def scan_symbol(sym):
     try:
         df = fetch_klines_best(sym)
         if df is None or len(df) < MIN_CANDLES:
             return None
         features = compute_pump_features(df)
-        # quick pulse check
         ob = fetch_orderbook(sym, limit=20)
         trades = fetch_recent_trades(sym, limit=200)
         pulse_vals = compute_pulse(ob, trades)
@@ -471,9 +476,8 @@ def scan_symbol(sym):
         return None
 
 # ---------- Main Loop (parallel) ----------
-
 def main_loop():
-    log.info("PumpHunter v4 starting. DRY_RUN=%s DEBUG=%s", DRY_RUN, DEBUG)
+    log.info("PumpHunter v4.1 starting. DRY_RUN=%s DEBUG=%s", DRY_RUN, DEBUG)
     cycle=0
     executor = ThreadPoolExecutor(max_workers=THREADS)
     try:
@@ -487,22 +491,18 @@ def main_loop():
                 except Exception:
                     if DEBUG: log.exception('future')
                 if r: results.append(r)
-            # process results: prioritize highest scores first (early detection)
             results_sorted = sorted(results, key=lambda x: x['score'], reverse=True)
             for r in results_sorted:
                 sym = r['symbol']; score = r['score']; features = r['features']; reasons = r['reasons']; last = r['last']; pulse = r['pulse']
                 log.info("%s | score=%s | vol_mult=%.2f | accel=%.6f | rsi=%s | last=%s | pulse=%s", sym, score, features['vol_mult'], features['price_accel'], ('%.2f'%features['rsi']) if features['rsi'] is not None else 'n/a', format_price(last), (round(pulse[0],3), round(pulse[1],3), round(pulse[2],3)))
-                # watchlist flow
                 if score >= SCORE_SIGNAL and can_publish(sym):
                     published = publish_trade(sym, features, reasons, price=last, score=score)
                     if published: log.info('Published TRADE for %s (score=%s)', sym, score)
                 elif score >= PRE_SIGNAL and can_publish(sym):
-                    # if already in watchlist, check confirm
                     if check_watchlist_confirm(sym, score, features, reasons):
                         published = publish_trade(sym, features, reasons, price=last, score=score)
                         if published: log.info('Published CONFIRMED pre-signal TRADE for %s', sym)
                     else:
-                        # add to watchlist for quick confirmation window
                         mark_watchlist(sym, score, features, reasons)
                         publish_alert(sym, features, reasons, level='ALERT')
                 elif score >= SCORE_ALERT and can_publish(sym):
@@ -522,11 +522,3 @@ def main_loop():
 
 if __name__ == '__main__':
     main_loop()
-
-# ---------------- Notes & suggested next steps ----------------
-# 1) Backtest: export historical signals + results before using live. Heuristics must be validated.
-# 2) ML option: collect labeled dataset (features -> next N-min return) and train a lightweight model offline
-#    (logistic regression or xgboost). Then load model weights here for real-time scoring.
-# 3) Latency: run this near your exchange (low latency VPS) and increase THREADS to speed symbol coverage.
-# 4) Risk: this script does NOT place orders by default. Use ENABLE_EXECUTION env + safe exchange client.
-# 5) Always paper trade first.
