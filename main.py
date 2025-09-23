@@ -310,55 +310,17 @@ def get_leverage_for_score(score):
     if score >= 40: return 10
     return None
 
-def compose_targets_and_stop(entry, df_for_atr, side='LONG', score=0, leverage=20):
-    if score >= 80:
-        percents = [0.02, 0.05, 0.08, 0.12, 0.18, 0.30, 0.50]
-    elif score >= 70:
-        percents = [0.01, 0.02, 0.035, 0.06, 0.09, 0.14, 0.22]
-    else:
-        percents = [0.003, 0.006, 0.01, 0.015, 0.02, 0.03, 0.05]
-
-    atr = None
-    try:
-        if ta and df_for_atr is not None and len(df_for_atr) >= 14:
-            closes = df_for_atr['close'].astype(float)
-            high = df_for_atr['high'].astype(float)
-            low = df_for_atr['low'].astype(float)
-            atr = float(ta.volatility.average_true_range(high, low, closes, window=14).iloc[-1])
-            if atr and atr > 0:
-                price = float(closes.iloc[-1])
-                atr_pct = atr / (price + 1e-9)
-                for i in range(len(percents)):
-                    min_pct = atr_pct * max(0.8, (i+1)*0.6)
-                    if percents[i] < min_pct:
-                        percents[i] = min_pct
-    except Exception as e:
-        if DEBUG: _log_exception_short("ATR compute error", e)
-        atr = None
-
-    tps = []
-    last = entry
+def compose_targets_and_stop(entry, side='LONG', score=0, leverage=20):
+    if score>=80: percents=[0.02,0.05,0.08,0.12,0.18,0.30,0.50]
+    elif score>=70: percents=[0.01,0.02,0.035,0.06,0.09,0.14,0.22]
+    else: percents=[0.003,0.006,0.01,0.015,0.02,0.03,0.05]
+    tps=[]
     for p in percents:
-        if side == 'LONG':
-            tp = last * (1 + p)
-        else:
-            tp = last * (1 - p)
-        pct = abs((tp - last) / (entry + 1e-9))
-        if pct < MIN_TP_PCT:
-            if side == 'LONG':
-                tp = last * (1 + MIN_TP_PCT)
-            else:
-                tp = last * (1 - MIN_TP_PCT)
+        tp= entry*(1+p) if side=='LONG' else entry*(1-p)
         tps.append(round(tp, PRICE_DECIMALS))
-        last = tps[-1]
-
-    # Make STOP wider than previous version: use ATR*2.5 if available, otherwise 2% default
-    if atr and atr > 0:
-        stop = (entry - atr * 2.5) if side == 'LONG' else (entry + atr * 2.5)
-    else:
-        stop = (entry * (1 - 0.02)) if side == 'LONG' else (entry * (1 + 0.02))
-    stop = round(stop, PRICE_DECIMALS)
-    return [float(f"{tp:.{PRICE_DECIMALS}f}") for tp in tps], float(stop)
+    # وقف خسارة ثابت 5%
+    stop = entry*0.95 if side=='LONG' else entry*1.05
+    return tps, round(stop, PRICE_DECIMALS)
 
 # ---------- Publish + state helpers ----------
 def can_publish(sym):
