@@ -28,7 +28,7 @@ log = logging.getLogger("PumpHunterV4")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ---------------- CONFIG ----------------
-DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"  # safe default: DRY_RUN ON
+DRY_RUN = os.environ.get("DRY_RUN", "1") == "0"  # safe default: DRY_RUN ON
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
