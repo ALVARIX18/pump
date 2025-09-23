@@ -314,7 +314,7 @@ def get_leverage_for_score(score):
     if score >= 80: return 50
     if score >= 70: return 25
     if score >= 60: return 20
-    if score >= 40: return 10   # <--- أضف هذا
+    if score >= 45: return 10   # <--- أضف هذا
     return None
 
 def compose_targets_and_stop(entry, df_for_atr, side='LONG', score=0, leverage=20):
@@ -359,12 +359,18 @@ def compose_targets_and_stop(entry, df_for_atr, side='LONG', score=0, leverage=2
         tps.append(round(tp, PRICE_DECIMALS))
         last = tps[-1]
 
-        if atr and atr > 0:
+                def compose_targets_and_stop(entry, tps, atr=None, side='LONG', score=0, leverage=2):
+    last = tps[-1]
+
+    if atr and atr > 0:
         stop = (entry - atr * 2.5) if side == 'LONG' else (entry + atr * 2.5)
     else:
         stop = (entry * (1 - 0.02)) if side == 'LONG' else (entry * (1 + 0.02))
+
     stop = round(stop, PRICE_DECIMALS)
-    return tps, stop
+    return [float(f"{tp:.{PRICE_DECIMALS}f}") for tp in tps], float(stop)
+
+
 
 # ---------- Publish + state helpers ----------
 def can_publish(sym):
