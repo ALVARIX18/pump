@@ -18,7 +18,7 @@ except Exception as e:
     raise
 
 # ---------------- Logging ----------------
-DEBUG = os.environ.get("DEBUG", "0") == "1"
+DEBUG = os.environ.get("DEBUG", "0") == "0"
 level = logging.DEBUG if DEBUG else logging.INFO
 logging.basicConfig(stream=sys.stdout, level=level, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("PumpHunterV4")
