@@ -154,6 +154,33 @@ def publish_alert(sym, features, reasons, level='ALERT'):
     return ok
 
 # ... [الباقي بدون تغيير، فقط عدلت كل الرسائل بنفس الأسلوب: "\n".join بدل كسر السطر الغلط]
+def main_loop():
+    log.info("Bot starting (PumpHunter V4) ...")
+    while True:
+        try:
+            results = scan_symbols()
+            if results:
+                for sym, features, reasons in results:
+                    score = features.get("score", 0)
+                    price = features.get("last")
+                    if score >= SCORE_SIGNAL:
+                        publish_trade(sym, features, reasons, price, score)
+                    elif score >= SCORE_ALERT:
+                        publish_alert(sym, features, reasons, "ALERT")
+                    elif score >= PRE_SIGNAL:
+                        publish_alert(sym, features, reasons, "PRE")
+            # save state
+            save_state(state)
+            log.info("Cycle complete. Sleeping %.1f s", POLL_SECONDS)
+            time.sleep(POLL_SECONDS)
+        except KeyboardInterrupt:
+            log.info("CTRL-C received, exiting...")
+            break
+        except Exception as e:
+            log.exception("Loop error")
+            time.sleep(5)
+
 
 if __name__ == '__main__':
     main_loop()
+
