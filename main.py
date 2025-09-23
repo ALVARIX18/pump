@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# PumpHunter v3.1 - جاهز للنسخ/اللصق
-# - ذكي، يعمل 24/7 على سيرفر (Railway / VPS). يرسل إشعارات للتلغرام.
-# - الوضع الآمن: DRY_RUN=False لإرسال رسائل حقيقية. *ضع توكن التلغرام في متغيرات البيئة* أو ضعها مباشرة (تحذير أدناه).
-# - يتضمن: فلتر دفتر الأوامر (pulse), حساب score, رافعة ديناميكية حسب الجودة، 7 TP + SL، تتبع الصفقات.
-# - تعليمات سريعة: ضع هذا الملف main.py في repo، ضبط متغيرات البيئة TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID في Railway/Host،
-#   ثم شغّل: python main.py
-#
-# ⚠️ أمان: لا تترك مفاتيح سرية في الريبو. استخدم متغيرات بيئة. إن أردت وضع المفاتيح مباشرة مؤقتاً - افعل ذلك محلياً ثم حذفه فوراً.
+# PumpHunter v3.1 - Final corrected copy (ready to paste & run)
+# - Place this file as main.py in your repo.
+# - Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID as environment variables in Railway/host.
+# - DRY_RUN=False will send real Telegram messages (ensure env vars set).
+# - STOP notifications are sent ONLY when no TP has been hit for that trade (per your request).
 # ======================================================================
 
 import os, sys, time, math, json, logging, warnings
 from datetime import datetime, timezone
+
 # third-party imports
 try:
     import requests
@@ -30,20 +28,14 @@ log = logging.getLogger("PumpHunter")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ---------------- CONFIG (عدل هنا فقط إن أردت) ----------------
-# الوضع: إذا True => يطبع معاينات فقط ولا يرسل. إذا False => يرسل للتلغرام (تأكد من مفاتيح التلغرام تحت).
-DRY_RUN = False  # ضع False لترسل إشعارات حقيقية
+# DRY_RUN True => previews only (no real Telegram). False => will send messages (requires TELEGRAM envs).
+DRY_RUN = os.environ.get("DRY_RUN", "0") != "0"  # default False if you set DRY_RUN=0; keep safe locally
 
-# ⚠️ ضع مفاتيح التلغرام كمُتغيرات بيئة في Railway/Host لتجنب فضح مفاتيحك:
-# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-#
-# إذا تفضّل وضعها مباشرة (غير مستحسن للريبو العام)، ازل التعليق وأدخل: "BOT:TOKEN" و "CHAT_ID"
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", None)
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", None)
-# مثال لتجربة محلية مؤقتة (غير موصى به لهذا الريبو):
-# TELEGRAM_BOT_TOKEN = "PUT_YOUR_TOKEN_HERE"
-# TELEGRAM_CHAT_ID = "PUT_YOUR_CHAT_ID_HERE"
+# Telegram credentials (recommended: set as env variables in Railway/Host)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# قائمة العملات التي يتم مسحها (يمكن تغييرها كسلسلة مفصولة بفواصل في متغيرات البيئة)
+# Default symbol list (you asked to keep as-is)
 SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "SOLUSDT",
     "XRPUSDT", "DOGEUSDT", "TRXUSDT", "LTCUSDT", "MATICUSDT",
@@ -51,7 +43,8 @@ SYMBOLS = [
     "ATOMUSDT", "ALGOUSDT", "MANAUSDT", "SANDUSDT", "NEARUSDT",
     "VETUSDT", "XMRUSDT", "XLMUSDT", "FTMUSDT", "APEUSDT"
 ]
-# إعدادات ضبط السلوك
+
+# Tuning
 MIN_CANDLES = int(os.environ.get("MIN_CANDLES", 30))
 KLIMIT = int(os.environ.get("KLIMIT", 60))
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", 60))
@@ -97,7 +90,7 @@ def _log_exception_short(msg, exc):
 
 # ---------------- Telegram ----------------
 def tg_send(msg):
-    # always preview in logs
+    """Preview always logged. If DRY_RUN False and TELEGRAM envs set, send live message."""
     log.info("TG PREVIEW: %s", msg.replace("\n", " | ")[:500])
     if DRY_RUN:
         return True
@@ -314,7 +307,7 @@ def get_leverage_for_score(score):
     if score >= 80: return 50
     if score >= 70: return 25
     if score >= 60: return 20
-    if score >= 45: return 10   # <--- أضف هذا
+    if score >= 40: return 10
     return None
 
 def compose_targets_and_stop(entry, df_for_atr, side='LONG', score=0, leverage=20):
@@ -359,18 +352,13 @@ def compose_targets_and_stop(entry, df_for_atr, side='LONG', score=0, leverage=2
         tps.append(round(tp, PRICE_DECIMALS))
         last = tps[-1]
 
-                def compose_targets_and_stop(entry, tps, atr=None, side='LONG', score=0, leverage=2):
-    last = tps[-1]
-
+    # Make STOP wider than previous version: use ATR*2.5 if available, otherwise 2% default
     if atr and atr > 0:
         stop = (entry - atr * 2.5) if side == 'LONG' else (entry + atr * 2.5)
     else:
         stop = (entry * (1 - 0.02)) if side == 'LONG' else (entry * (1 + 0.02))
-
     stop = round(stop, PRICE_DECIMALS)
     return [float(f"{tp:.{PRICE_DECIMALS}f}") for tp in tps], float(stop)
-
-
 
 # ---------- Publish + state helpers ----------
 def can_publish(sym):
@@ -411,7 +399,6 @@ def publish_trade(sym, features, reasons, df_for_atr, score):
     side = 'LONG' if features['price_accel'] >= 0 else 'SHORT'
     tps, stop = compose_targets_and_stop(entry, df_for_atr, side=side, score=score, leverage=leverage)
 
-    # compose message
     msg_lines = [f"${sym}", f"{side} Cross {leverage}x", f"🟢Entry: {format_price(entry)}", "", "Targets:"]
     for idx, tp in enumerate(tps, start=1):
         msg_lines.append(f"{idx}. {format_price(tp)}")
@@ -449,7 +436,7 @@ def publish_alert(sym, features, reasons, level="ALERT"):
         save_state(state)
     return ok
 
-# ---------- Monitor ---------- 
+# ---------- Monitor ----------
 def monitor_active_trades():
     changed = False
     active = state.get('active_trades', [])
@@ -461,7 +448,8 @@ def monitor_active_trades():
             price = current_price_best(sym)
             if price is None:
                 df = fetch_klines_best(sym)
-                if df is None: continue
+                if df is None:
+                    continue
                 price = float(df['close'].iloc[-1])
             side = trade.get('side')
             entry = trade.get('entry')
@@ -469,6 +457,7 @@ def monitor_active_trades():
             stop = trade.get('stop')
             hit = trade.get('hit', [False]*len(tps))
 
+            # check TPs
             for idx, tp in enumerate(tps):
                 if not hit[idx]:
                     if (side == 'LONG' and price >= tp) or (side == 'SHORT' and price <= tp):
@@ -478,9 +467,11 @@ def monitor_active_trades():
                         tg_send(f"✅ TP{idx+1} HIT — {sym}\nTP: {format_price(tp)}\nEntry: {format_price(entry)}\nNow: {format_price(price)}\n{nowstr()}")
                         changed = True
 
+            # STOP: send STOP alert ONLY if no TP was hit yet for this trade
             if (side == 'LONG' and price <= stop) or (side == 'SHORT' and price >= stop):
                 if not trade.get('tp_hit_any', False):
                     tg_send(f"⛔ STOP HIT — {sym}\nStop: {format_price(stop)}\nEntry: {format_price(entry)}\nNow: {format_price(price)}\n{nowstr()}")
+                # record and remove
                 state['active_trades'].remove(trade)
                 rec = {"symbol": sym, "side": side, "entry": entry, "exit": price, "reason": "STOP",
                        "opened_at": trade.get('opened_at'), "closed_at": nowts(), "hit": hit}
@@ -488,6 +479,7 @@ def monitor_active_trades():
                 changed = True
                 continue
 
+            # all hit
             if all(hit):
                 tg_send(f"🏁 ALL TPs HIT — {sym}\nEntry: {format_price(entry)}\nFinal: {format_price(price)}\n{nowstr()}")
                 state['active_trades'].remove(trade)
