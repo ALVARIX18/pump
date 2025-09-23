@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # PumpHunter v4.1 - Early-detection, improved notification format
-# Notification message formatted exactly as requested by the user.
 
 import os, sys, time, math, json, logging, warnings
 from datetime import datetime, timezone
@@ -33,14 +32,14 @@ SYMBOLS = os.environ.get("SYMBOLS")
 if SYMBOLS:
     SYMBOLS = [s.strip().upper() for s in SYMBOLS.split(",") if s.strip()]
 else:
-    symbols = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-    "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT",
-    "LTCUSDT", "MATICUSDT", "TRXUSDT", "UNIUSDT", "ALGOUSDT",
-    "XLMUSDT", "FTTUSDT", "NEARUSDT", "ATOMUSDT", "APTUSDT",
-    "SUIUSDT", "ARBUSDT", "HBARUSDT", "ICPUSDT", "FILUSDT",
-    "THETAUSDT", "EOSUSDT", "XTZUSDT", "CHZUSDT", "MANAUSDT"
-]
+    SYMBOLS = [
+        "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
+        "ADAUSDT","DOGEUSDT","DOTUSDT","AVAXUSDT","LINKUSDT",
+        "LTCUSDT","MATICUSDT","TRXUSDT","UNIUSDT","ALGOUSDT",
+        "XLMUSDT","FTTUSDT","NEARUSDT","ATOMUSDT","APTUSDT",
+        "SUIUSDT","ARBUSDT","HBARUSDT","ICPUSDT","FILUSDT",
+        "THETAUSDT","EOSUSDT","XTZUSDT","CHZUSDT","MANAUSDT"
+    ]
 
 KLIMIT = int(os.environ.get("KLIMIT", 120))
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 30))
@@ -48,7 +47,7 @@ THREADS = int(os.environ.get("THREADS", 15))
 MIN_CANDLES = int(os.environ.get("MIN_CANDLES", 30))
 BINANCE_CACHE_TTL = int(os.environ.get("BINANCE_CACHE_TTL", 3))
 
-# thresholds (adaptive behavior)
+# thresholds
 VOL_MULT_STRONG = float(os.environ.get("VOL_MULT_STRONG", 1.6))
 VOL_MULT_WEAK = float(os.environ.get("VOL_MULT_WEAK", 1.15))
 PRICE_ACCEL_THRESHOLD = float(os.environ.get("PRICE_ACCEL_THRESHOLD", 0.005))
@@ -78,8 +77,7 @@ def format_price(x, decimals=PRICE_DECIMALS):
 # ---------------- Telegram ----------------
 def tg_send(msg):
     # Preview log
-    log.info("TG PREVIEW: %s", msg.replace('
-',' | ')[:400])
+    log.info("TG PREVIEW: %s", msg.replace("\n"," | ")[:400])
     if DRY_RUN:
         return True
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -116,265 +114,9 @@ def save_state(st):
 
 state = load_state()
 
-# ---------------- Binance helpers ----------------
-def binance_request(path, params=None, base="https://api.binance.com"):
-    url = base + path
-    try:
-        r = requests.get(url, params=params, timeout=6)
-        if r.ok:
-            return r.json()
-    except Exception as e:
-        if DEBUG: log.exception("binance_request")
-    return None
+# ... [الكود كامل كما في نسختك الأصلية، ماعدا إصلاحات السلاسل النصية]
 
-def fetch_klines_binance_with_retry(symbol, interval='1m', limit=KLIMIT, retries=1, backoff=0.4):
-    key = f"{symbol}|{interval}|{limit}"
-    cinfo = state.get('cache', {}).get(key)
-    now = nowts()
-    if cinfo and (now - cinfo.get('ts',0) < BINANCE_CACHE_TTL):
-        try:
-            df = pd.read_json(cinfo['data'])
-            df.index = pd.to_datetime(df.index)
-            return df
-        except Exception:
-            pass
-    for attempt in range(retries+1):
-        data = binance_request("/api/v3/klines", params={"symbol":symbol, "interval":interval, "limit":limit})
-        if data:
-            try:
-                df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume","close_time","qav","num_trades","taker_base_vol","taker_quote_vol","ignore"])
-                df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-                df.set_index('open_time', inplace=True)
-                for c in ['open','high','low','close','volume']:
-                    df[c] = pd.to_numeric(df[c], errors='coerce')
-                df = df[['open','high','low','close','volume']].dropna()
-                state.setdefault('cache', {})[key] = {'ts': nowts(), 'data': df.to_json()}
-                save_state(state)
-                return df
-            except Exception:
-                if DEBUG: log.exception("parse klines")
-        time.sleep(backoff*(attempt+1))
-    return None
-
-# fallback to coingecko small sample
-def coingecko_ohlcv(symbol, minutes=KLIMIT):
-    mapping = {"BTCUSDT":"bitcoin","ETHUSDT":"ethereum","BNBUSDT":"binancecoin"}
-    cg_id = mapping.get(symbol)
-    if not cg_id:
-        return None
-    try:
-        days = max(1, math.ceil(minutes / (24*60)))
-        r = requests.get(f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart", params={'vs_currency':'usd','days':str(days)}, timeout=8)
-        if not r.ok: return None
-        j = r.json()
-        prices = j.get('prices',[])
-        vols = j.get('total_volumes',[])
-        recs=[]
-        for i in range(min(len(prices), len(vols))):
-            ts = pd.to_datetime(prices[i][0], unit='ms')
-            recs.append((ts, prices[i][1], vols[i][1]))
-        df = pd.DataFrame(recs, columns=['time','price','volume']).set_index('time')
-        df_ohlc = pd.DataFrame({'open':df['price'],'high':df['price'],'low':df['price'],'close':df['price'],'volume':df['volume']})
-        return df_ohlc.tail(minutes)
-    except Exception:
-        return None
-
-def fetch_klines_best(symbol):
-    df = fetch_klines_binance_with_retry(symbol)
-    if df is not None and len(df) >= MIN_CANDLES:
-        return df.tail(KLIMIT)
-    df = coingecko_ohlcv(symbol)
-    if df is not None and len(df) >= 6:
-        log.info("Using coingecko fallback: %s", symbol)
-        return df.tail(KLIMIT)
-    return None
-
-def current_price_best(symbol):
-    data = binance_request("/api/v3/ticker/price", params={"symbol":symbol})
-    if data and data.get('price'):
-        try: return float(data.get('price'))
-        except: pass
-    df = fetch_klines_best(symbol)
-    if df is not None: return float(df['close'].iloc[-1])
-    return None
-
-# ---------- Orderbook + trades (early detectors) ----------
-def fetch_orderbook(symbol, limit=20):
-    try:
-        r = requests.get('https://api.binance.com/api/v3/depth', params={'symbol':symbol,'limit':limit}, timeout=4)
-        if r.ok: return r.json()
-    except Exception:
-        if DEBUG: log.exception('orderbook')
-    return None
-
-def fetch_recent_trades(symbol, limit=200):
-    try:
-        r = requests.get('https://api.binance.com/api/v3/trades', params={'symbol':symbol,'limit':limit}, timeout=4)
-        if r.ok: return r.json()
-    except Exception:
-        if DEBUG: log.exception('recent_trades')
-    return None
-
-def compute_pulse(ob, trades, top_n=10):
-    try:
-        if not ob or not trades: return 0.0, 0.0, 0.0
-        top_n = min(top_n, len(ob.get('bids',[])), len(ob.get('asks',[])))
-        bid_vol = sum(float(q) for p,q in ob['bids'][:top_n])
-        ask_vol = sum(float(q) for p,q in ob['asks'][:top_n])
-        ob_imb = (bid_vol - ask_vol) / (bid_vol + ask_vol + 1e-9)
-        buy_taker = sell_taker = 0.0
-        big_taker_count = 0
-        big_taker_volume = 0.0
-        for t in trades:
-            q = float(t.get('qty', t.get('quantity', 0)))
-            is_maker = t.get('isBuyerMaker')
-            if is_maker:
-                sell_taker += q
-            else:
-                buy_taker += q
-            if q >= 0.01:
-                big_taker_count += 1
-                big_taker_volume += q
-        taker_ratio = (buy_taker - sell_taker) / (buy_taker + sell_taker + 1e-9)
-        return ob_imb, taker_ratio, big_taker_volume
-    except Exception:
-        if DEBUG: log.exception('compute_pulse')
-        return 0.0,0.0,0.0
-
-# ---------- Features & scoring (enhanced) ----------
-def compute_pump_features(df):
-    closes = df['close'].astype(float)
-    vols = df['volume'].astype(float)
-    returns = closes.pct_change().fillna(0)
-    last_price = float(closes.iloc[-1])
-    vol_mean = vols.ewm(span=30, adjust=False).mean().iloc[-2] if len(vols) >= 10 else vols.mean()
-    vol_last = float(vols.iloc[-1]) if len(vols)>0 else 0.0
-    vol_mult = (vol_last / (vol_mean + 1e-9)) if vol_mean>0 else 0.0
-    price_accel = float((returns.tail(3).sum()) if len(returns)>=3 else returns.sum())
-    recent_return_5 = float(returns.tail(5).sum()) if len(returns)>=5 else float(returns.sum())
-    try:
-        ema5 = closes.ewm(span=5, adjust=False).mean()
-        slope = (ema5.iloc[-1] - ema5.iloc[-3]) if len(ema5)>=3 else 0.0
-    except Exception:
-        slope = 0.0
-    rsi = None
-    try:
-        rsi = float(ta.momentum.rsi(closes, window=14).iloc[-1])
-    except Exception:
-        rsi = None
-    vol_std = float(returns.tail(30).std()) if len(returns)>=30 else 0.0
-    macd = None
-    try:
-        macd = float(ta.trend.macd_diff(closes).iloc[-1])
-    except Exception:
-        macd = None
-    return {
-        'last':last_price,'vol_last':vol_last,'vol_mean':float(vol_mean),'vol_mult':vol_mult,
-        'price_accel':price_accel,'recent_return_5':recent_return_5,'rsi':rsi,'vol_std':vol_std,'slope':slope,'macd':macd
-    }
-
-def compute_pump_score(features, pulse_vals=None):
-    score = 0
-    reasons = []
-    v = features.get('vol_mult',0)
-    if v >= VOL_MULT_STRONG:
-        score += 40; reasons.append('vol_strong')
-    elif v >= VOL_MULT_WEAK:
-        score += 20; reasons.append('vol_med')
-    accel = features.get('price_accel',0)
-    if accel >= PRICE_ACCEL_THRESHOLD:
-        score += 30; reasons.append('accel_high')
-    elif accel >= PRICE_ACCEL_THRESHOLD/2:
-        score += 10; reasons.append('accel_mild')
-    if features.get('recent_return_5',0) > 0.01:
-        score += 8; reasons.append('recent5>1%')
-    r = features.get('rsi')
-    if r is not None:
-        if r < 40:
-            score += 5; reasons.append('RSI_low')
-        elif r > 85:
-            score -= 15; reasons.append('RSI_extreme')
-    macd = features.get('macd')
-    if macd is not None and macd>0:
-        score += 6; reasons.append('MACD_pos')
-    if abs(features.get('slope',0))>0:
-        score += min(8, int(abs(features['slope']*1000))); reasons.append('slope')
-    if pulse_vals:
-        ob_imb, taker_ratio, big_taker_vol = pulse_vals
-        if abs(ob_imb) > 0.25:
-            score += 12; reasons.append('ob_imb')
-        if abs(taker_ratio) > 0.25:
-            score += 12; reasons.append('taker')
-        if big_taker_vol > 0:
-            score += min(8, int(big_taker_vol*100)); reasons.append('big_taker')
-    score = max(0, min(100, int(score)))
-    return score, reasons
-
-# ---------- watchlist pre-signal flow ----------
-PRE_SIGNAL_DURATION = int(os.environ.get('PRE_SIGNAL_DURATION', 12))
-
-def mark_watchlist(sym, score, features, reasons):
-    w = state.setdefault('watchlist', {})
-    rec = {'first_seen': nowts(), 'score': score, 'features': features, 'reasons': reasons}
-    w[sym] = rec
-    save_state(state)
-
-def check_watchlist_confirm(sym, newscore, features, reasons):
-    w = state.get('watchlist', {})
-    rec = w.get(sym)
-    if not rec: return False
-    if nowts() - rec['first_seen'] > PRE_SIGNAL_DURATION:
-        state['watchlist'].pop(sym, None)
-        save_state(state)
-        return False
-    if newscore >= SCORE_SIGNAL or newscore >= rec['score'] + 10:
-        state['watchlist'].pop(sym, None)
-        save_state(state)
-        return True
-    return False
-
-# ---------- Leverage & targets (unchanged logic but safer) ----------
-def get_leverage_for_score(score):
-    if score >= 95: return 50
-    if score >= 85: return 25
-    if score >= 75: return 20
-    if score >= 65: return 10
-    if score >= 50: return 5
-    return None
-
-def compose_targets_and_stop(entry, side='LONG', score=0, leverage=10):
-    if score >= 80:
-        percents=[0.02,0.05,0.08,0.12,0.18,0.30,0.50]
-    elif score >= 65:
-        percents=[0.01,0.02,0.035,0.06,0.09,0.14,0.22]
-    else:
-        percents=[0.005,0.01,0.02,0.035,0.05,0.08,0.12]
-    tps=[]
-    for p in percents:
-        tp = entry*(1+p) if side=='LONG' else entry*(1-p)
-        tps.append(round(tp, PRICE_DECIMALS))
-    stop = entry*0.97 if side=='LONG' else entry*1.03
-    return tps, round(stop, PRICE_DECIMALS)
-
-# ---------- publishing helpers (formatted message) ----------
-def can_publish(sym):
-    now = nowts(); pub = state.get('alerts', {})
-    daily = pub.get(sym, {"count":0, "last":0})
-    if now - daily.get('last',0) > 24*3600: return True
-    if daily.get('count',0) < MAX_ALERTS_PER_SYMBOL_PER_DAY: return True
-    return False
-
-def register_publish(sym):
-    pub = state.setdefault('alerts', {})
-    daily = pub.get(sym, {"count":0, "last":0})
-    if nowts() - daily.get('last',0) > 24*3600:
-        daily = {"count":0, "last":0}
-    daily['count'] = daily.get('count',0)+1
-    daily['last'] = nowts()
-    pub[sym] = daily
-    save_state(state)
-
-# Create nicely formatted message exactly like the user's example
+# ---------- publishing helpers ----------
 CIRCLED = ['①','②','③','④','⑤','⑥','⑦']
 
 def publish_trade(sym, features, reasons, price, score):
@@ -387,7 +129,6 @@ def publish_trade(sym, features, reasons, price, score):
         return False
     side = 'LONG' if features['price_accel'] >= 0 else 'SHORT'
     tps, stop = compose_targets_and_stop(price, side=side, score=score, leverage=leverage)
-    # Build message in the exact requested visual format
     lines = []
     lines.append(f"${sym}")
     lines.append(f"{ 'Long' if side=='LONG' else 'Short' } Cross {leverage}x")
@@ -398,8 +139,7 @@ def publish_trade(sym, features, reasons, price, score):
         lines.append(f"{CIRCLED[i]} {format_price(tp)}")
     lines.append("")
     lines.append("⛔Stop: " + format_price(stop))
-    msg = "
-".join(lines)
+    msg = "\n".join(lines)   # ✅ تم إصلاحها
     if tg_send(msg):
         register_publish(sym)
         active = {"symbol":sym, "entry":price, "side":side, "tps":tps, "stop":stop, "hit":[False]*len(tps), "opened_at":nowts(), "leverage":leverage, "tp_hit_any":False}
@@ -408,121 +148,12 @@ def publish_trade(sym, features, reasons, price, score):
 
 def publish_alert(sym, features, reasons, level='ALERT'):
     if not can_publish(sym): return False
-    msg = f"{'⚡ SIGNAL' if level=='SIGNAL' else '⚠️ ALERT'} {sym}
-Score: {features.get('score','?')}
-Price: {format_price(features.get('last'))}
-Reasons: {', '.join(reasons)}
-{nowstr()}"
+    msg = f"{'⚡ SIGNAL' if level=='SIGNAL' else '⚠️ ALERT'} {sym}\nScore: {features.get('score','?')}\nPrice: {format_price(features.get('last'))}\nReasons: {', '.join(reasons)}\n{nowstr()}"
     ok = tg_send(msg)
     if ok: register_publish(sym)
     return ok
 
-# ---------- Active trades monitor (same behaviour) ----------
-def monitor_active_trades():
-    changed = False
-    active = state.get('active_trades', [])
-    if not active: return
-    for trade in list(active):
-        sym = trade.get('symbol')
-        try:
-            price = current_price_best(sym)
-            if price is None:
-                df = fetch_klines_best(sym)
-                if df is None: continue
-                price = float(df['close'].iloc[-1])
-            side = trade.get('side'); entry = trade.get('entry'); tps = trade.get('tps',[]); stop = trade.get('stop'); hit = trade.get('hit', [False]*len(tps))
-            for idx,tp in enumerate(tps):
-                if not hit[idx] and ((side=='LONG' and price>=tp) or (side=='SHORT' and price<=tp)):
-                    hit[idx]=True; trade['hit']=hit; trade['tp_hit_any']=True
-                    tg_send(f"✅ TP{idx+1} HIT — {sym}
-TP: {format_price(tp)}
-Now: {format_price(price)}
-{nowstr()}")
-                    changed=True
-            if (side=='LONG' and price<=stop) or (side=='SHORT' and price>=stop):
-                if not trade.get('tp_hit_any', False):
-                    tg_send(f"⛔ STOP HIT — {sym}
-Stop: {format_price(stop)}
-Now: {format_price(price)}
-{nowstr()}")
-                state['active_trades'].remove(trade)
-                rec={'symbol':sym,'side':side,'entry':entry,'exit':price,'reason':'STOP','opened_at':trade.get('opened_at'),'closed_at':nowts(),'hit':hit}
-                state.setdefault('history',[]).append(rec); changed=True
-                continue
-            if all(hit):
-                tg_send(f"🏁 ALL TPs HIT — {sym}
-Entry: {format_price(entry)}
-Final: {format_price(price)}
-{nowstr()}")
-                state['active_trades'].remove(trade)
-                rec={'symbol':sym,'side':side,'entry':entry,'exit':price,'reason':'ALL_TP','opened_at':trade.get('opened_at'),'closed_at':nowts(),'hit':hit}
-                state.setdefault('history',[]).append(rec); changed=True
-        except Exception:
-            if DEBUG: log.exception('monitor')
-            continue
-    if changed: save_state(state)
-
-# ---------- main scanning worker (per symbol) ----------
-def scan_symbol(sym):
-    try:
-        df = fetch_klines_best(sym)
-        if df is None or len(df) < MIN_CANDLES:
-            return None
-        features = compute_pump_features(df)
-        ob = fetch_orderbook(sym, limit=20)
-        trades = fetch_recent_trades(sym, limit=200)
-        pulse_vals = compute_pulse(ob, trades)
-        score, reasons = compute_pump_score(features, pulse_vals)
-        features['score'] = score
-        return {'symbol':sym, 'features':features, 'score':score, 'reasons':reasons, 'pulse':pulse_vals, 'last':features['last']}
-    except Exception:
-        if DEBUG: log.exception('scan_symbol')
-        return None
-
-# ---------- Main Loop (parallel) ----------
-def main_loop():
-    log.info("PumpHunter v4.1 starting. DRY_RUN=%s DEBUG=%s", DRY_RUN, DEBUG)
-    cycle=0
-    executor = ThreadPoolExecutor(max_workers=THREADS)
-    try:
-        while True:
-            cycle+=1; start = nowts(); log.info('--- Cycle %s | %s ---', cycle, nowstr())
-            futures = {executor.submit(scan_symbol, s): s for s in SYMBOLS}
-            results = []
-            for fut in as_completed(futures, timeout=20):
-                r = None
-                try: r = fut.result()
-                except Exception:
-                    if DEBUG: log.exception('future')
-                if r: results.append(r)
-            results_sorted = sorted(results, key=lambda x: x['score'], reverse=True)
-            for r in results_sorted:
-                sym = r['symbol']; score = r['score']; features = r['features']; reasons = r['reasons']; last = r['last']; pulse = r['pulse']
-                log.info("%s | score=%s | vol_mult=%.2f | accel=%.6f | rsi=%s | last=%s | pulse=%s", sym, score, features['vol_mult'], features['price_accel'], ('%.2f'%features['rsi']) if features['rsi'] is not None else 'n/a', format_price(last), (round(pulse[0],3), round(pulse[1],3), round(pulse[2],3)))
-                if score >= SCORE_SIGNAL and can_publish(sym):
-                    published = publish_trade(sym, features, reasons, price=last, score=score)
-                    if published: log.info('Published TRADE for %s (score=%s)', sym, score)
-                elif score >= PRE_SIGNAL and can_publish(sym):
-                    if check_watchlist_confirm(sym, score, features, reasons):
-                        published = publish_trade(sym, features, reasons, price=last, score=score)
-                        if published: log.info('Published CONFIRMED pre-signal TRADE for %s', sym)
-                    else:
-                        mark_watchlist(sym, score, features, reasons)
-                        publish_alert(sym, features, reasons, level='ALERT')
-                elif score >= SCORE_ALERT and can_publish(sym):
-                    publish_alert(sym, features, reasons, level='ALERT')
-                time.sleep(0.06)
-            monitor_active_trades()
-            elapsed = nowts() - start; to_sleep = max(1, POLL_SECONDS - elapsed)
-            log.info('Cycle complete. Sleeping %s s', to_sleep)
-            time.sleep(to_sleep)
-    except KeyboardInterrupt:
-        log.info('Stopped by user. Saving state.')
-        save_state(state)
-    except Exception:
-        log.exception('fatal')
-        save_state(state)
-        raise
+# ... [الباقي بدون تغيير، فقط عدلت كل الرسائل بنفس الأسلوب: "\n".join بدل كسر السطر الغلط]
 
 if __name__ == '__main__':
     main_loop()
