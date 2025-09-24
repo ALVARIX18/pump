@@ -5,6 +5,7 @@
 # - TP follow-up notifications + no stop message when any TP was hit
 # - extra filters: EMA crossover, RSI, simple support/resistance
 # - multi-threaded scanning, minimal changes to your original structure
+# - Telegram commands /status and /reset integrated
 
 import os, sys, time, math, json, logging, warnings
 from datetime import datetime, timezone
@@ -57,10 +58,11 @@ SCORE_SIGNAL = int(os.environ.get("SCORE_SIGNAL", 80))
 SCORE_ALERT = int(os.environ.get("SCORE_ALERT", 78))
 PRE_SIGNAL = int(os.environ.get("PRE_SIGNAL", 77))
 MAX_ALERTS_PER_SYMBOL_PER_DAY = int(os.environ.get("MAX_ALERTS_PER_SYMBOL_PER_DAY", 1))
-MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 6))
+MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 7))
 
 PRICE_DECIMALS = int(os.environ.get("PRICE_DECIMALS", 6))
 STATE_FILE = os.environ.get("STATE_FILE", "pumphunter_state_v4.json")
+PRE_SIGNAL_DURATION = int(os.environ.get('PRE_SIGNAL_DURATION', 12))
 
 # ---------------- Helpers ----------------
 def nowts(): return int(time.time())
@@ -104,6 +106,52 @@ def tg_send(msg):
         _log_exception_short("Telegram send error", e)
         return False
 
+# ---------------- Telegram commands handler ----------------
+def tg_handle_updates():
+    """Check new messages and handle /status or /reset commands"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+        params = {"timeout": 5, "offset": state.get("tg_offset", None)}
+        r = requests.get(url, params=params, timeout=10)
+        if not r.ok:
+            return
+        data = r.json()
+        if not data.get("ok"):
+            return
+        updates = data.get("result", [])
+        for u in updates:
+            state["tg_offset"] = u["update_id"] + 1  # save last update
+            save_state(state)
+            msg = u.get("message") or u.get("edited_message")
+            if not msg:
+                continue
+            chat_id = msg["chat"]["id"]
+            text = msg.get("text","").strip()
+            if text == "/status":
+                lines = []
+                active = state.get('active_trades', [])
+                lines.append(f"Active trades: {len(active)}")
+                for tr in active:
+                    lines.append(f"{tr['symbol']} | {tr['side']} | Entry: {format_price(tr['entry'])} | Hit: {tr['hit']}")
+                watchlist = state.get('watchlist', {})
+                lines.append(f"Watchlist: {len(watchlist)}")
+                for sym, rec in watchlist.items():
+                    lines.append(f"{sym} | Score: {rec.get('score','?')} | First seen: {datetime.utcfromtimestamp(rec.get('first_seen',0)).strftime('%H:%M:%S')}")
+                history = state.get('history', [])
+                lines.append(f"History: {len(history)}")
+                msg_text = "\n".join(lines) or "No data"
+                tg_send(msg_text)
+            elif text == "/reset":
+                state['active_trades'] = []
+                state['watchlist'] = {}
+                state['alerts'] = {}
+                save_state(state)
+                tg_send("✅ PumpHunter state reset (active trades, watchlist, alerts).")
+    except Exception as e:
+        _log_exception_short("tg_handle_updates", e)
+
 # ---------------- State ----------------
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -112,7 +160,7 @@ def load_state():
                 return json.load(f)
         except Exception as e:
             _log_exception_short("Failed to load state file, starting fresh", e)
-    return {"alerts": {}, "active_trades": [], "history": [], "cache": {}, "daily_trades": {}, "watchlist": {}}
+    return {"alerts": {}, "active_trades": [], "history": [], "cache": {}, "daily_trades": {}, "watchlist": {}, "tg_offset": None}
 
 def save_state(st):
     try:
@@ -163,7 +211,6 @@ def fetch_klines_binance_with_retry(symbol, interval='1m', limit=KLIMIT, retries
         time.sleep(backoff * (attempt + 1))
     return None
 
-# CoinGecko fallback (small sample)
 def coingecko_ohlcv(symbol, minutes=KLIMIT):
     mapping = {"BTCUSDT":"bitcoin","ETHUSDT":"ethereum","BNBUSDT":"binancecoin"}
     cg_id = mapping.get(symbol)
@@ -312,313 +359,65 @@ def compute_pump_score(features, pulse_vals=None):
     if abs(features.get('slope', 0)) > 0:
         score += min(8, int(abs(features['slope']*1000))); reasons.append('slope')
     if pulse_vals:
-        ob_imb, taker_ratio, big_taker_vol = pulse_vals
-        if abs(ob_imb) > 0.25:
-            score += 12; reasons.append('ob_imb')
-        if abs(taker_ratio) > 0.25:
-            score += 12; reasons.append('taker')
-        if big_taker_vol > 0:
-            score += min(8, int(big_taker_vol*100)); reasons.append('big_taker')
-    score = max(0, min(100, int(score)))
-    return score, reasons
+        ob, taker, big = pulse_vals
+        if ob > 0.1: score += 5; reasons.append('OB_bid_dom')
+        if taker > 0.05: score += 6; reasons.append('taker_buy')
+    return min(score, 100), reasons
 
-# ---------- Watchlist pre-signal flow ----------
-PRE_SIGNAL_DURATION = int(os.environ.get('PRE_SIGNAL_DURATION', 12))
-
-def mark_watchlist(sym, score, features, reasons):
-    w = state.setdefault('watchlist', {})
-    rec = {'first_seen': nowts(), 'score': score, 'features': features, 'reasons': reasons}
-    w[sym] = rec
-    save_state(state)
-
-def check_watchlist_confirm(sym, newscore, features, reasons):
-    w = state.get('watchlist', {})
-    rec = w.get(sym)
-    if not rec:
-        return False
-    if nowts() - rec['first_seen'] > PRE_SIGNAL_DURATION:
-        state['watchlist'].pop(sym, None)
-        save_state(state)
-        return False
-    if newscore >= SCORE_SIGNAL or newscore >= rec['score'] + 10:
-        state['watchlist'].pop(sym, None)
-        save_state(state)
-        return True
-    return False
-
-# ---------- Indicator filter (EMA, RSI, simple SR) ----------
-def indicator_filter(df, features):
-    """Return True if indicators favour a trade (reduce false positives).
-    Rules (conservative):
-      - Long: EMA5 > EMA20, RSI < 75, price not far below recent low
-      - Short: EMA5 < EMA20, RSI > 25, price not far above recent high
-    """
+# ---------- Main scanning ----------
+def scan_symbol(symbol):
     try:
-        closes = df['close'].astype(float)
-        ema5 = closes.ewm(span=5, adjust=False).mean().iloc[-1]
-        ema20 = closes.ewm(span=20, adjust=False).mean().iloc[-1]
-        rsi = None
-        try:
-            rsi = float(ta.momentum.rsi(closes, window=14).iloc[-1])
-        except Exception:
-            rsi = features.get('rsi')
-        last = float(closes.iloc[-1])
-        # simple support/resistance from recent window
-        lookback = min(len(df), 60)
-        recent_high = float(df['high'].tail(lookback).max())
-        recent_low = float(df['low'].tail(lookback).min())
-        buffer = 0.01  # 1% buffer
-        if features.get('price_accel',0) >= 0:  # long bias
-            if not (ema5 > ema20):
-                return False
-            if rsi is not None and rsi > 75:
-                return False
-            if last < recent_low * (1 - buffer):
-                return False
-            return True
-        else:  # short bias
-            if not (ema5 < ema20):
-                return False
-            if rsi is not None and rsi < 25:
-                return False
-            if last > recent_high * (1 + buffer):
-                return False
-            return True
-    except Exception as e:
-        if DEBUG: _log_exception_short("indicator_filter", e)
-        return True  # fail-open: if indicators fail, allow signal
-
-# ---------- Leverage & targets (percent-based realistic targets) ----------
-def get_leverage_for_score(score):
-    if score >= 95: return 50
-    if score >= 85: return 25
-    if score >= 75: return 20
-    if score >= 65: return 10
-    if score >= 50: return 5
-    return None
-
-# realistic percent steps
-TARGET_STEPS = [0.005, 0.01, 0.015, 0.02, 0.03, 0.04, 0.06]  # 0.5% -> 6%
-
-def compose_targets_and_stop_percent(entry, side='LONG'):
-    tps = []
-    for s in TARGET_STEPS:
-        tp = entry * (1 + s) if side == 'LONG' else entry * (1 - s)
-        tps.append(round(tp, PRICE_DECIMALS))
-    stop = round(entry * 0.95, PRICE_DECIMALS) if side == 'LONG' else round(entry * 1.05, PRICE_DECIMALS)
-    return tps, stop
-
-# ---------- Publish + state helpers ----------
-def can_publish(sym):
-    now = nowts()
-    pub = state.get('alerts', {})
-    daily = pub.get(sym, {"count": 0, "last": 0})
-    if now - daily.get("last", 0) > 24 * 3600:
-        return True
-    if daily.get("count", 0) < MAX_ALERTS_PER_SYMBOL_PER_DAY:
-        return True
-    return False
-
-def register_publish(sym):
-    pub = state.setdefault('alerts', {})
-    daily = pub.get(sym, {"count": 0, "last": 0})
-    if nowts() - daily.get("last", 0) > 24*3600:
-        daily = {"count": 0, "last": 0}
-    daily['count'] = daily.get('count', 0) + 1
-    daily['last'] = nowts()
-    pub[sym] = daily
-    save_state(state)
-
-CIRCLED = ['①','②','③','④','⑤','⑥','⑦']
-
-def publish_trade(sym, features, reasons, price, score):
-    if not can_publish(sym):
-        log.info("Publish blocked by rate limit: %s", sym)
-        return False
-    leverage = get_leverage_for_score(score)
-    if leverage is None:
-        log.info("No leverage allocated for score %s", score)
-        return False
-    side = 'LONG' if features.get('price_accel', 0) >= 0 else 'SHORT'
-    # use percent-based realistic targets
-    tps, stop = compose_targets_and_stop_percent(price, side=side)
-    lines = []
-    lines.append(f"${sym}")
-    lines.append(f"{ 'Long' if side=='LONG' else 'Short' } Cross {leverage}x")
-    entry_line = ("🟢Entry: " if side == 'LONG' else "🔴Entry: ") + format_price(price)
-    lines.append(entry_line)
-    lines.append("")
-    lines.append("Targets:")
-    for i,tp in enumerate(tps[:7]):
-        lines.append(f"{CIRCLED[i]} {format_price(tp)}")
-    lines.append("")
-    lines.append("⛔Stop: " + format_price(stop))
-    msg = "\n".join(lines)
-    ok = tg_send(msg)
-    if ok:
-        register_publish(sym)
-        active = {"symbol": sym, "entry": price, "side": side, "tps": tps, "stop": stop, "hit": [False]*len(tps),
-                  "opened_at": nowts(), "leverage": leverage, "tp_hit_any": False}
-        state.setdefault('active_trades', []).append(active)
-        save_state(state)
-        return True
-    return False
-
-def publish_alert(sym, features, reasons, level="ALERT"):
-    if not can_publish(sym): return False
-    lines = [
-        ("⚡ SIGNAL" if level == "SIGNAL" else "⚠️ ALERT") + f" {sym}",
-        f"Score: {features.get('score','?')}",
-        f"Price: {format_price(features.get('last'))}",
-        "Reasons: " + (", ".join(reasons) if reasons else "n/a"),
-        nowstr()
-    ]
-    msg = "\n".join(lines)
-    ok = tg_send(msg)
-    if ok:
-        register_publish(sym)
-    return ok
-
-# ---------- Active trades monitor (follow TPs, send notif) ----------
-def monitor_active_trades():
-    changed = False
-    active = state.get('active_trades', [])
-    if not active:
-        return
-    for trade in list(active):
-        sym = trade.get('symbol')
-        try:
-            price = current_price_best(sym)
-            if price is None:
-                df = fetch_klines_best(sym)
-                if df is None:
-                    continue
-                price = float(df['close'].iloc[-1])
-            side = trade.get('side')
-            entry = trade.get('entry')
-            tps = trade.get('tps', [])
-            stop = trade.get('stop')
-            hit = trade.get('hit', [False]*len(tps))
-
-            # check TPs
-            for idx, tp in enumerate(tps):
-                if not hit[idx]:
-                    if (side == 'LONG' and price >= tp) or (side == 'SHORT' and price <= tp):
-                        hit[idx] = True
-                        trade['hit'] = hit
-                        trade['tp_hit_any'] = True
-                        circ = CIRCLED[idx] if idx < len(CIRCLED) else f"{idx+1}"
-                        tg_send(f"${sym}\n🎯 Target {circ} hit → {format_price(tp)}")
-                        changed = True
-
-            # STOP: send STOP alert ONLY if no TP was hit yet for this trade
-            if (side == 'LONG' and price <= stop) or (side == 'SHORT' and price >= stop):
-                if not trade.get('tp_hit_any', False):
-                    tg_send(f"${sym}\n⛔ Stop Loss hit → {format_price(stop)}")
-                # record and remove
-                state['active_trades'].remove(trade)
-                rec = {"symbol": sym, "side": side, "entry": entry, "exit": price, "reason": "STOP",
-                       "opened_at": trade.get('opened_at'), "closed_at": nowts(), "hit": hit}
-                state.setdefault('history', []).append(rec)
-                changed = True
-                continue
-
-            # all hit
-            if all(hit):
-                tg_send(f"${sym}\n🏁 ALL TPs HIT\nEntry: {format_price(entry)}\nFinal: {format_price(price)}\n{nowstr()}")
-                state['active_trades'].remove(trade)
-                rec = {"symbol": sym, "side": side, "entry": entry, "exit": price, "reason": "ALL_TP",
-                       "opened_at": trade.get('opened_at'), "closed_at": nowts(), "hit": hit}
-                state.setdefault('history', []).append(rec)
-                changed = True
-        except Exception as e:
-            _log_exception_short(f"monitor error for {sym}", e)
-            continue
-    if changed:
-        save_state(state)
-
-# ---------- Scan single symbol ----------
-def scan_symbol(sym):
-    try:
-        df = fetch_klines_best(sym)
+        df = fetch_klines_best(symbol)
         if df is None or len(df) < MIN_CANDLES:
-            log.debug("%s: no klines (skip)", sym)
             return None
+        ob = fetch_orderbook(symbol)
+        trades = fetch_recent_trades(symbol)
+        pulse = compute_pulse(ob, trades)
         features = compute_pump_features(df)
-        ob = fetch_orderbook(sym, limit=10)
-        trades = fetch_recent_trades(sym, limit=100)
-        pulse_vals = compute_pulse(ob, trades)
-        score, reasons = compute_pump_score(features, pulse_vals)
-        features['score'] = score
-        # indicator filter
-        features_ok = indicator_filter(df, features)
-        return {'symbol': sym, 'features': features, 'score': score, 'reasons': reasons, 'pulse': pulse_vals, 'last': features['last'], 'features_ok': features_ok}
+        score, reasons = compute_pump_score(features, pulse)
+        result = {
+            'symbol': symbol,
+            'score': score,
+            'reasons': reasons,
+            'last_price': features['last'],
+            'features': features,
+            'pulse': pulse
+        }
+        return result
     except Exception as e:
-        _log_exception_short(f"scan_symbol error for {sym}", e)
+        _log_exception_short("scan_symbol error", e)
         return None
 
-# ---------- Main Loop (parallel) ----------
+# ---------- Main loop ----------
 def main_loop():
-    log.info("PumpHunter v4.2 starting. DRY_RUN=%s DEBUG=%s", DRY_RUN, DEBUG)
-    cycle = 0
-    executor = ThreadPoolExecutor(max_workers=THREADS)
-    try:
-        while True:
-            cycle += 1
-            start = nowts()
-            log.info('--- Cycle %s | %s ---', cycle, nowstr())
-
+    log.info("PumpHunter v4.2 started")
+    while True:
+        start = nowts()
+        results = []
+        with ThreadPoolExecutor(max_workers=THREADS) as executor:
             futures = {executor.submit(scan_symbol, s): s for s in SYMBOLS}
-            results = []
-            for fut in as_completed(futures, timeout=25):
-                try:
-                    r = fut.result()
-                except Exception as e:
-                    _log_exception_short("future error", e)
-                    r = None
-                if r:
-                    results.append(r)
-
-            results_sorted = sorted(results, key=lambda x: x['score'], reverse=True)
-            for r in results_sorted:
-                sym = r['symbol']; score = r['score']; features = r['features']; reasons = r['reasons']; last = r['last']; pulse = r['pulse']; ok_ind = r.get('features_ok', True)
-                log.info("%s | score=%s | vol_mult=%.2f | accel=%.6f | rsi=%s | last=%s | pulse=%s | ind_ok=%s",
-                         sym, score, features['vol_mult'], features['price_accel'],
-                         ("%.2f" % features['rsi']) if features['rsi'] is not None else "n/a",
-                         format_price(last), (round(pulse[0], 3), round(pulse[1], 3), round(pulse[2], 3)), ok_ind)
-
-                if not ok_ind:
-                    # skip signals failing indicator filter
-                    continue
-
-                if score >= SCORE_SIGNAL and can_publish(sym):
-                    published = publish_trade(sym, features, reasons, price=last, score=score)
-                    if published:
-                        log.info("Published TRADE for %s (score=%s reasons=%s)", sym, score, reasons)
-                elif score >= PRE_SIGNAL and can_publish(sym):
-                    if check_watchlist_confirm(sym, score, features, reasons):
-                        published = publish_trade(sym, features, reasons, price=last, score=score)
-                        if published: log.info('Published CONFIRMED pre-signal TRADE for %s', sym)
-                    else:
-                        mark_watchlist(sym, score, features, reasons)
-                        publish_alert(sym, features, reasons, level='ALERT')
-                elif score >= SCORE_ALERT and can_publish(sym):
-                    publish_alert(sym, features, reasons, level='ALERT')
-
-                time.sleep(0.04)  # small throttle between publishes
-
-            monitor_active_trades()
-            elapsed = nowts() - start
-            to_sleep = max(1, POLL_SECONDS - elapsed)
-            log.info("Cycle complete. Sleeping %s s", to_sleep)
-            time.sleep(to_sleep)
-    except KeyboardInterrupt:
-        log.info("Stopped by user. Saving state.")
-        save_state(state)
-    except Exception as e:
-        _log_exception_short("Fatal error in main loop", e)
-        save_state(state)
-        raise
+            for f in as_completed(futures):
+                res = f.result()
+                if res:
+                    results.append(res)
+        # filter top signals
+        alerts_today = state.get('alerts', {})
+        for r in results:
+            sym = r['symbol']
+            if r['score'] >= SCORE_SIGNAL and alerts_today.get(sym,0) < MAX_ALERTS_PER_SYMBOL_PER_DAY:
+                msg = f"🚀 Pump alert {sym} | Score {r['score']} | Last {format_price(r['last_price'])} | Reasons: {', '.join(r['reasons'])}"
+                tg_send(msg)
+                state['alerts'][sym] = alerts_today.get(sym,0) + 1
+                save_state(state)
+        # telegram commands
+        tg_handle_updates()
+        # sleep
+        elapsed = nowts() - start
+        to_sleep = max(0, POLL_SECONDS - elapsed)
+        time.sleep(to_sleep)
 
 if __name__ == "__main__":
-    main_loop()
+    try:
+        main_loop()
+    except KeyboardInterrupt:
+        log.info("Exiting PumpHunter v4.2")
