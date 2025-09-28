@@ -60,7 +60,7 @@ PRICE_ACCEL_THRESHOLD = float(os.environ.get("PRICE_ACCEL_THRESHOLD", 0.005))
 SCORE_SIGNAL = int(os.environ.get("SCORE_SIGNAL", 80))
 SCORE_ALERT = int(os.environ.get("SCORE_ALERT", 79))
 PRE_SIGNAL = int(os.environ.get("PRE_SIGNAL", 78))
-MAX_ALERTS_PER_SYMBOL_PER_DAY = int(os.environ.get("MAX_ALERTS_PER_SYMBOL_PER_DAY", 2))
+MAX_ALERTS_PER_SYMBOL_PER_DAY = int(os.environ.get("MAX_ALERTS_PER_SYMBOL_PER_DAY", 1))
 MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 6))
 
 PRICE_DECIMALS = int(os.environ.get("PRICE_DECIMALS", 6))
