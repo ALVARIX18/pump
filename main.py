@@ -56,7 +56,7 @@ SCORE_SIGNAL = int(os.environ.get("SCORE_SIGNAL", 98))  # stricter
 SCORE_ALERT = int(os.environ.get("SCORE_ALERT", 97))
 PRE_SIGNAL = int(os.environ.get("PRE_SIGNAL", 96))
 MAX_ALERTS_PER_SYMBOL_PER_DAY = int(os.environ.get("MAX_ALERTS_PER_SYMBOL_PER_DAY", 1))
-MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 14))
+MAX_TRADES_PER_DAY = int(os.environ.get("MAX_TRADES_PER_DAY", 13))
 
 PRICE_DECIMALS = int(os.environ.get("PRICE_DECIMALS", 6))
 STATE_FILE = os.environ.get("STATE_FILE", "pumphunter_state_v4_enhanced.json")
