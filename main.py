@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# PumpHunter v4.2.1 -  Enhanced (BTC  trend filter + short support + fewer false positives)
+# PumpHunter v4.2.1 -  Enhanced (BTC  trend filter + short  support + fewer false positives)
 # Usage: set environment variables (see README). Default safe: D RY_RUN=1 (no real orders).
 
 import os, sys, time, math, json, logging, warnings
